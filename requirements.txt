@@ -1,0 +1,4 @@
+requests
+langchain_community
+langchain-groq
+langgraph
