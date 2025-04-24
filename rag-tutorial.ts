@@ -1,25 +1,36 @@
-import "cheerio";
-import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
-import { Document } from "@langchain/core/documents";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { pull } from "langchain/hub";
-import { Annotation, StateGraph } from "@langchain/langgraph";
-import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
-import { OpenAIEmbeddings } from "@langchain/openai";
-import { ChatGroq } from "@langchain/groq";
+/**
+ * CHAT MODEL
+ */
 
-const llm = new ChatGroq({
-  model: "llama-3.3-70b-versatile",
+import { ChatOpenAI } from "@langchain/openai";
+
+const llm = new ChatOpenAI({
+  model: "gpt-4o-mini",
   temperature: 0
 });
+
+/**
+ * EMBEDDINGS MODEL
+ */
+import { OpenAIEmbeddings } from "@langchain/openai";
 
 const embeddings = new OpenAIEmbeddings({
   model: "text-embedding-3-large"
 });
 
+/**
+ * VECTOR STORE
+ */
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+
 const vectorStore = new MemoryVectorStore(embeddings);
 
+
+/**
+ * LOADING DOCUMENTS
+ */
+import "cheerio";
+import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
 // Load and chunk contents of blog
 const pTagSelector = "p";
 const cheerioLoader = new CheerioWebBaseLoader(
@@ -31,36 +42,61 @@ const cheerioLoader = new CheerioWebBaseLoader(
 );
 
 const docs = await cheerioLoader.load();
+console.assert(docs.length === 1);
+// console.log(`Total characters: ${docs[0].pageContent.length}`);
+// console.log(docs[0].pageContent.slice(0, 50));
+
+/**
+ * SPLITTING documents
+ */
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
 const splitter = new RecursiveCharacterTextSplitter({
   chunkSize: 1000, chunkOverlap: 200
 });
 const allSplits = await splitter.splitDocuments(docs);
+
 // console.log(`Split blog post into ${allSplits.length} sub-documents.`);
 
-
-
+/**
+ * Storing documents
+ */
 // Index chunks
 await vectorStore.addDocuments(allSplits)
 
+/**
+* RETRIEVAL AND GENERATION PROMPT
+*/
+import { pull } from "langchain/hub";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
 // Define prompt for question-answering
-const promptTemplate = await pull<ChatPromptTemplate>("rlm/rag-prompt");
+// const promptTemplate = await pull<ChatPromptTemplate>("rlm/rag-prompt");
 
-// const template = `Use the following pieces of context to answer the question at the end.
-// If you don't know the answer, just say that you don't know, don't try to make up an answer.
-// Use three sentences maximum and keep the answer as concise as possible.
-// Always say "thanks for asking!" at the end of the answer.
+/**
+ * CUSTOM PROMPT
+ */
 
-// {context}
+const template = `Use the following pieces of context to answer the question at the end.
+If you don't know the answer, just say that you don't know, don't try to make up an answer.
+Use three sentences maximum and keep the answer as concise as possible.
+Always say "thanks for asking!" at the end of the answer.
 
-// Question: {question}
+{context}
 
-// Helpful Answer:`;
+Question: {question}
 
-// const promptTemplate = ChatPromptTemplate.fromMessages([
-//   ["user", template],
-// ]);
+Helpful Answer:`;
 
+const promptTemplate = ChatPromptTemplate.fromMessages([
+  ["user", template],
+]);
+
+
+/**
+ * STATE
+ */
+import { Document } from "@langchain/core/documents";
+import { Annotation } from "@langchain/langgraph";
 // Define state for application
 const InputStateAnnotation = Annotation.Root({
   question: Annotation<string>,
@@ -72,12 +108,14 @@ const StateAnnotation = Annotation.Root({
   answer: Annotation<string>,
 });
 
+/**
+ * Nodes (application steps)
+ */
 // Define application steps
 const retrieve = async (state: typeof InputStateAnnotation.State) => {
   const retrievedDocs = await vectorStore.similaritySearch(state.question)
   return { context: retrievedDocs };
 };
-
 
 const generate = async (state: typeof StateAnnotation.State) => {
   const docsContent = state.context.map(doc => doc.pageContent).join("\n");
@@ -86,6 +124,10 @@ const generate = async (state: typeof StateAnnotation.State) => {
   return { answer: response.content };
 };
 
+/**
+ * Control flow
+ */
+import { StateGraph } from "@langchain/langgraph";
 
 // Compile application and test
 const graph = new StateGraph(StateAnnotation)
@@ -96,12 +138,15 @@ const graph = new StateGraph(StateAnnotation)
   .addEdge("generate", "__end__")
   .compile();
 
-// let inputs = { question: 'Qual a empresa irá pagar indenização?' };
-
-let inputs = { question: 'Qual será os dias do multirão?' };
+// let inputs = { question: "Aonde será a inscrição?" };
 
 // const result = await graph.invoke(inputs);
-// console.log(result.answer);
+// console.log(result.context.slice(0, 2));
+// console.log(`\nAnswer: ${result["answer"]}`);
+
+/**
+ * Steam steps
+ */
 // console.log(inputs);
 // console.log("\n====\n");
 // for await (const chunk of await graph.stream(inputs, {
@@ -110,8 +155,41 @@ let inputs = { question: 'Qual será os dias do multirão?' };
 //   console.log(chunk);
 //   console.log("\n====\n");
 // }
-const stream = await graph.stream(inputs, { streamMode: "messages" });
 
-for await (const [message, _metadata] of stream) {
-  process.stdout.write(message.content);
-}
+/**
+ * Stream tokens
+ */
+// let inputs = { question: "Como fazer inscrição no PID?" };
+
+
+// const stream = await graph.stream(inputs, { streamMode: "messages" });
+
+// for await (const [message, _metadata] of stream) {
+//   process.stdout.write(message.content);
+// }
+
+
+// console.log({
+//   totalDocuments, allSplits: allSplits[0]
+// })
+
+/**
+ * Query analysis
+ */
+const totalDocuments = allSplits.length;
+const third = Math.floor(totalDocuments / 3);
+
+allSplits.forEach((document, i) => {
+  if (i < third) {
+    document.metadata["section"] = "beginning";
+  } else if (i < 2 * third) {
+    document.metadata["section"] = "middle";
+  } else {
+    document.metadata["section"] = "end";
+  }
+});
+
+// allSplits[0].metadata;
+
+
+

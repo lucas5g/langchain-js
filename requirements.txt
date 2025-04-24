@@ -2,3 +2,5 @@ requests
 langchain_community
 langchain-groq
 langgraph
+langchain-openai
+bs4
