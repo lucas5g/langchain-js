@@ -50,7 +50,7 @@ const StateAnnotation = Annotation.Root({
 });
 
 const generate = async (state: typeof StateAnnotation.State) => {
-  const docsContent = state.context.map(doc => doc.body).join("\n");
+  const docsContent = state.context.map(doc => doc.text).join("\n");
   console.log(docsContent);
   const messages = await promptTemplate.invoke({ question: state.question, context: docsContent });
   const response = await llm.invoke(messages);
